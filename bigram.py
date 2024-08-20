@@ -28,15 +28,27 @@ val_data = data[n:]
 rng = jax.random.PRNGKey(42)
 key, subkey = jax.random.split(rng)
 
-batch_size = 4
+batch_size = 32
 block_size = 8
 
 def get_batch(split):
     data = train_data if split == "train" else val_data
     ix = np.random.randint(0, data.shape[0] - block_size, batch_size)
-    x = jnp.stack([data[i:i+block_size] for i in ix])
-    y = jnp.stack([data[i+1:i+block_size+1] for i in ix])
+    x = np.stack([data[i:i+block_size] for i in ix])
+    y = np.stack([data[i+1:i+block_size+1] for i in ix])
     return x, y
+
+eval_iters = 20
+def estimate_loss():
+    out = {}
+    for split in ["train", "val"]:
+        loss = 0
+        for _ in range(eval_iters):
+            xb, yb = get_batch(split)
+            _, l = m.apply(params, xb, yb)
+            loss += l
+        out[split] = (loss / eval_iters).item()
+    return out
 
 class BigramLanguageModel(nn.Module):
     vocab_size: int
@@ -93,14 +105,20 @@ def train_step(params, opt_state, xb, yb):
     return params, opt_state, loss
 
 start_time = timer()
+for _ in range(1000):
+    params, opt_state, loss = train_step(params, opt_state, xb, yb)
+    jax.block_until_ready(loss)
+end_time = timer()
+print("Time taken:", end_time - start_time)
 
 for step in range(10000):
     xb, yb = get_batch("train")
     params, opt_state, loss = train_step(params, opt_state, xb, yb)
     
     if step % 2000 == 0:  # Print loss every 100 steps
-        jax.block_until_ready(loss)
-        print(f"Step {step}, Loss: {loss:.4f}", "Elapsed time:", timer() - start_time)
+        # jax.block_until_ready(loss)
+        loss = estimate_loss()
+        print(f"Step {step}, Loss: {loss}", "Elapsed time:", timer() - start_time)
         idx = jnp.zeros((1, 1), dtype=jnp.int32)
 
 idx = jnp.zeros((1, 1), dtype=jnp.int32)
