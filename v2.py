@@ -13,6 +13,7 @@ learning_rate = 1e-3
 eval_interval = 500
 eval_iters = 200
 e_embed = 32
+max_seq_len = 1000
 
 with open("input.txt", "r", encoding="utf-8") as file:
     text = file.read()
@@ -71,6 +72,18 @@ class Head(nn.Module):
         out = wei @ v
         return out
 
+class MultiHeadAttention(nn.Module):
+    num_heads: int
+    head_size: int
+
+    @nn.compact
+    def __call__(self, x):
+        B, T, C = x.shape
+        heads = [Head(self.head_size)(x) for _ in range(self.num_heads)]
+        out = jnp.concatenate(heads, axis=-1)
+        # out = nn.Dense(C, name='proj')(out)
+        return out
+
 class BigramLanguageModel(nn.Module):
     vocab_size: int
     n_embed: int = 32
@@ -80,14 +93,15 @@ class BigramLanguageModel(nn.Module):
         B, T = idx.shape
 
         tok_emb = nn.Embed(num_embeddings=self.vocab_size, name='token_embedding_table', features=self.n_embed)(idx) # (B, T, C)
-        pos_emb = nn.Embed(num_embeddings=block_size, name='position_embedding_table', features=self.n_embed)(jnp.arange(T)) # (T, C)
+        pos_emb = nn.Embed(num_embeddings=max_seq_len, name='position_embedding_table', features=self.n_embed)(jnp.arange(T)) # (T, C)
         x = tok_emb + pos_emb # (B, T, C)
-        x = Head(head_size=e_embed)(x)
-        logits = nn.Dense(self.vocab_size, name='lm_head')(tok_emb) # (B, T, vocab_size)
+        # x = Head(self.n_embed)(x)
+        x = MultiHeadAttention(num_heads=4, head_size=self.n_embed//4, name='sa_heads')(x)
+        logits = nn.Dense(self.vocab_size, name='lm_head')(x) # (B, T, vocab_size)
         if targets is None:
             return logits, 0
-        logits_reshaped = rearrange(logits, 'b t c -> (b t) c')
-        loss = optax.softmax_cross_entropy_with_integer_labels(logits_reshaped, targets.flatten())
+        logits = rearrange(logits, 'b t c -> (b t) c')
+        loss = optax.softmax_cross_entropy_with_integer_labels(logits, targets.flatten())
         return logits, jnp.mean(loss)
 
     def generate(self, params, subkey, idx, max_new_tokens: int = 100):
