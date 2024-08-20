@@ -5,14 +5,17 @@ import optax
 from einops import rearrange
 import numpy as np
 from functools import partial
+from jax.experimental import checkify
 
 batch_size = 32
 block_size = 8
 max_iters = 5000
 learning_rate = 1e-3
-eval_interval = 500
-eval_iters = 200
-e_embed = 32
+eval_interval = 3000 #500
+eval_iters = 5 #20 #200
+n_embed = 32
+n_ff = 4 * n_embed
+n_head = 4
 max_seq_len = 1000
 
 with open("input.txt", "r", encoding="utf-8") as file:
@@ -73,30 +76,54 @@ class Head(nn.Module):
         return out
 
 class MultiHeadAttention(nn.Module):
-    num_heads: int
+    n_head: int
     head_size: int
 
     @nn.compact
     def __call__(self, x):
         B, T, C = x.shape
-        heads = [Head(self.head_size)(x) for _ in range(self.num_heads)]
+        heads = [Head(self.head_size)(x) for _ in range(self.n_head)]
         out = jnp.concatenate(heads, axis=-1)
-        # out = nn.Dense(C, name='proj')(out)
+        out = nn.Dense(C, name='proj')(out)
         return out
+
+class FeedForward(nn.Module):
+    n_embed: int
+    n_ff: int
+
+    @nn.compact
+    def __call__(self, x):
+        x = nn.Dense(self.n_ff)(x)
+        x = nn.relu(x)
+        x = nn.Dense(self.n_embed)(x)
+        return x
+
+class Block(nn.Module):
+    n_embed: int
+    n_head: int
+    n_ff: int
+
+    @nn.compact
+    def __call__(self, x):
+        x = x + MultiHeadAttention(n_head=self.n_head, head_size=self.n_embed//self.n_head, name='sa_heads')(x)
+        x = x + FeedForward(n_embed=self.n_embed, n_ff=self.n_ff)(x)
+        return x
 
 class BigramLanguageModel(nn.Module):
     vocab_size: int
     n_embed: int = 32
+    n_head: int = 4
+    n_ff: int = 4 * n_embed
     
     @nn.compact
     def __call__(self, idx: jnp.ndarray, targets: jnp.ndarray = None):
+        # checkify.check(self.n_embed % self.n_head == 0, "n_embed must be divisible by n_head")
         B, T = idx.shape
 
         tok_emb = nn.Embed(num_embeddings=self.vocab_size, name='token_embedding_table', features=self.n_embed)(idx) # (B, T, C)
         pos_emb = nn.Embed(num_embeddings=max_seq_len, name='position_embedding_table', features=self.n_embed)(jnp.arange(T)) # (T, C)
         x = tok_emb + pos_emb # (B, T, C)
-        # x = Head(self.n_embed)(x)
-        x = MultiHeadAttention(num_heads=4, head_size=self.n_embed//4, name='sa_heads')(x)
+        x = nn.Sequential([Block(n_embed=self.n_embed, n_head=self.n_head, n_ff=self.n_ff) for _ in range(3)])(x)
         logits = nn.Dense(self.vocab_size, name='lm_head')(x) # (B, T, vocab_size)
         if targets is None:
             return logits, 0
@@ -122,7 +149,7 @@ class BigramLanguageModel(nn.Module):
 
 xb, yb = get_batch("train")
 
-m = BigramLanguageModel(vocab_size=vocab_size)
+m = BigramLanguageModel(vocab_size=vocab_size, n_embed=n_embed, n_head=n_head, n_ff=n_ff)
 params = m.init(subkey, xb, yb)
 xb_, yb_ = get_batch("train")
 out, loss = m.apply(params, xb_, yb_)
@@ -157,7 +184,7 @@ for step in range(max_iters):
     xb, yb = get_batch("train")
     params, opt_state, loss = train_step(params, opt_state, xb, yb)
     
-    if step % eval_interval == 0:
+    if step % eval_interval == 0 or step == max_iters - 1:
         loss = estimate_loss()
         print(f"Step {step}, Loss: {loss}", "Elapsed time:", timer() - start_time)
         idx = jnp.zeros((1, 1), dtype=jnp.int32)
