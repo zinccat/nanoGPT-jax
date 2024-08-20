@@ -60,14 +60,14 @@ class Head(nn.Module):
     @nn.compact
     def __call__(self, x, training: bool = False):
         B, T, C = x.shape
-        k = nn.Dense(self.head_size, name='key', use_bias=False, dtype=self.dtype, kernel_init=initializer)(x)
-        q = nn.Dense(self.head_size, name='query', use_bias=False, dtype=self.dtype, kernel_init=initializer)(x)
+        k = nn.Dense(self.head_size, name='key', use_bias=False, dtype=self.dtype, kernel_init=initializer)(x).astype(jnp.float32)
+        q = nn.Dense(self.head_size, name='query', use_bias=False, dtype=self.dtype, kernel_init=initializer)(x).astype(jnp.float32)
         v = nn.Dense(self.head_size, name='value', use_bias=False, dtype=self.dtype, kernel_init=initializer)(x)
 
         wei = q @ rearrange(k, 'b t h -> b h t') * (self.head_size ** -0.5)
         tri = jnp.triu(jnp.full((T, T), -jnp.inf), k=1) # might need to change this
         wei = wei + tri
-        wei = jax.nn.softmax(wei, axis=-1)
+        wei = jax.nn.softmax(wei, axis=-1).astype(self.dtype)
         wei = nn.Dropout(rate=dropout_rate)(wei, deterministic=not training)
         out = wei @ v
         return out
@@ -131,7 +131,7 @@ class GPTLanguageModel(nn.Module):
         x = nn.Sequential([Block(n_embed=self.n_embed, n_head=self.n_head, n_ff=self.n_ff, dtype=self.dtype) for _ in range(self.n_layer)])(x, training=training)
         x = nn.LayerNorm(name="ln_f", epsilon=1e-5)(x)
         logits = nn.Dense(self.vocab_size, name='lm_head', dtype=self.dtype, kernel_init=initializer)(x) # (B, T, vocab_size)
-        logits = nn.Dropout(rate=dropout_rate)(logits, deterministic=not training)
+        # logits = nn.Dropout(rate=dropout_rate)(logits, deterministic=not training)
         if targets is None:
             return logits, None
         logits = rearrange(logits, 'b t c -> (b t) c')
@@ -139,6 +139,7 @@ class GPTLanguageModel(nn.Module):
         return logits, jnp.mean(loss)
 
     def generate(self, params, key, idx, max_new_tokens: int = 100):
+        start_pos = idx.shape[1] - 1
         # pad idx to max_new_tokens
         idx = jnp.pad(idx, ((0, 0), (0, max_new_tokens)), mode='constant', constant_values=0)
 
@@ -149,7 +150,7 @@ class GPTLanguageModel(nn.Module):
             token = jax.random.categorical(subkey, logits) # no need to use softmax before this
             new_idx = idx.at[:, i+1].set(token)
             return new_idx
-        for i in range(max_new_tokens):
+        for i in range(start_pos, start_pos + max_new_tokens):
             key, subkey = jax.random.split(key)
             idx = step_fn(i, idx, key)
         return jnp.array(idx)
