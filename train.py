@@ -19,12 +19,7 @@ itos = {i: ch for i, ch in enumerate(chars)}
 encode = lambda x: [stoi[ch] for ch in x]
 decode = lambda x: ''.join([itos[i] for i in x])
 
-# print(encode("hii there"))
-# print(decode(encode("hii there")))
-
-data = jnp.array(encode(text), dtype=jnp.int32) # no default int64
-# print(data.shape, data.dtype)
-# print(data[:100])
+data = np.array(encode(text), dtype=np.int32) # no default int64, use numpy for underlying data
 
 n = int(len(data) * 0.9)
 train_data = data[:n]
@@ -38,7 +33,7 @@ block_size = 8
 
 def get_batch(split):
     data = train_data if split == "train" else val_data
-    ix = jax.random.randint(subkey, (batch_size,), 0, data.shape[0] - block_size)
+    ix = np.random.randint(0, data.shape[0] - block_size, batch_size)
     x = jnp.stack([data[i:i+block_size] for i in ix])
     y = jnp.stack([data[i+1:i+block_size+1] for i in ix])
     return x, y
@@ -48,14 +43,10 @@ class BigramLanguageModel(nn.Module):
     
     @nn.compact
     def __call__(self, idx: jnp.ndarray, targets: jnp.ndarray = None):
-        logits = nn.Embed(num_embeddings=self.vocab_size, features=self.vocab_size)(idx) # (bs, block_size, vocab_size)
-        B, T, C = logits.shape
-        logits_reshaped = rearrange(logits, 'b t c -> (b t) c')
-        # logits_reshaped = jax.lax.reshape(logits, (B * T, C))
+        logits = nn.Embed(num_embeddings=self.vocab_size, features=self.vocab_size)(idx) # (bs, block_size, 
         if targets is None:
-            return logits, jnp.zeros((B, T,), dtype=jnp.int32)
-        # jax.lax.cond(targets is not None, lambda _: targets, lambda _: jnp.zeros((B, T,), dtype=jnp.int32), operand=None)
-        # targets = rearrange(targets, 'b t -> (b t)')
+            return logits, 0
+        logits_reshaped = rearrange(logits, 'b t c -> (b t) c')
         loss = optax.softmax_cross_entropy_with_integer_labels(logits_reshaped, targets.flatten())
         return logits, jnp.mean(loss)
 
@@ -86,9 +77,9 @@ xb_, yb_ = get_batch("train")
 out, loss = m.apply(params, xb_, yb_)
 
 idx = jnp.zeros((1, 1), dtype=jnp.int32)
-print(decode(np.array(m.generate(params, key, idx, max_new_tokens=20)[0])))
+# print(decode(np.array(m.generate(params, key, idx, max_new_tokens=500)[0])))
 
-optimizer = optax.adam(1e-3)
+optimizer = optax.adamw(1e-3)
 opt_state = optimizer.init(params)
 from timeit import default_timer as timer
 
@@ -99,14 +90,14 @@ def train_step(params, opt_state, xb, yb):
         return loss
     
     loss, grad = jax.value_and_grad(loss_fn)(params)
-    updates, opt_state = optimizer.update(grad, opt_state)
+    updates, opt_state = optimizer.update(grad, opt_state, params)
     params = optax.apply_updates(params, updates)
     
     return params, opt_state, loss
 
 start_time = timer()
 
-for step in range(1000):
+for step in range(10000):
     xb, yb = get_batch("train")
     params, opt_state, loss = train_step(params, opt_state, xb, yb)
     
@@ -114,17 +105,7 @@ for step in range(1000):
         jax.block_until_ready(loss)
         print(f"Step {step}, Loss: {loss:.4f}", "Elapsed time:", timer() - start_time)
         idx = jnp.zeros((1, 1), dtype=jnp.int32)
-        # print(decode(np.array(m.generate(params, subkey, idx, max_new_tokens=10)[0])))
-# with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
-#     for step in range(20):
-#         xb, yb = get_batch("train")
-#         params, opt_state, loss = train_step(params, opt_state, xb, yb)
-    
-#     jax.block_until_ready(loss)
 
-# print(params)
-# out, loss = m.apply(params, xb_, yb_)
-# print(loss)
 idx = jnp.zeros((1, 1), dtype=jnp.int32)
 subkey, key = jax.random.split(subkey)
-print(decode(np.array(m.generate(params, key, idx, max_new_tokens=20)[0])))
+print(decode(np.array(m.generate(params, key, idx, max_new_tokens=100)[0])))
