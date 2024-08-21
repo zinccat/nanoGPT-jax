@@ -2,6 +2,7 @@
 nanoGPT in jax
 
 ## Usage
+On RTX 3090, 500 steps takes
 ```bash
 python gpt.py
 ```
