@@ -3,7 +3,7 @@ nanoGPT in jax
 
 ## Usage
 ```bash
-python train.py
+python gpt.py
 ```
 
 ## Benchmark
