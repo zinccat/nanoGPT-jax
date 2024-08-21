@@ -8,10 +8,10 @@ from timeit import default_timer as timer
 
 batch_size = 64
 block_size = 256
-max_iters = 1000
+max_iters = 5000
 eval_interval = 500
 learning_rate = 3e-4
-eval_iters = 10 #200
+eval_iters = 200
 n_embed = 384
 n_ff = 4 * n_embed
 n_head = 6
@@ -226,13 +226,13 @@ start_time = timer()
 # print("Time taken:", end_time - start_time)
 
 for step in range(max_iters):
-    xb, yb = get_batch("train")
-    params, opt_state, loss = train_step(params, opt_state, xb, yb)
-    
     if step % eval_interval == 0 or step == max_iters - 1:
         loss = estimate_loss()
         print(f"Step {step}, Loss: {loss}", "Elapsed time:", timer() - start_time)
         idx = jnp.zeros((1, 1), dtype=jnp.int32)
+
+    xb, yb = get_batch("train")
+    params, opt_state, loss = train_step(params, opt_state, xb, yb)
 
 idx = jnp.zeros((1, 1), dtype=jnp.int32)
 key, subkey = jax.random.split(key)

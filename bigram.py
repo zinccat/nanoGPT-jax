@@ -55,7 +55,7 @@ class BigramLanguageModel(nn.Module):
     
     @nn.compact
     def __call__(self, idx: jnp.ndarray, targets: jnp.ndarray = None):
-        logits = nn.Embed(num_embeddings=self.vocab_size, features=self.vocab_size)(idx) # (bs, block_size, 
+        logits = nn.Embed(num_embeddings=self.vocab_size, features=self.vocab_size)(idx) # (bs, block_size, vocab_size)
         if targets is None:
             return logits, 0
         logits_reshaped = rearrange(logits, 'b t c -> (b t) c')
