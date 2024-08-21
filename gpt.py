@@ -4,12 +4,11 @@ import flax.linen as nn
 import optax
 from einops import rearrange
 import numpy as np
-from functools import partial
 from timeit import default_timer as timer
 
 batch_size = 64
 block_size = 256
-max_iters = 5000
+max_iters = 1000
 eval_interval = 500
 learning_rate = 3e-4
 eval_iters = 10 #200
@@ -18,7 +17,7 @@ n_ff = 4 * n_embed
 n_head = 6
 n_layer = 6
 dropout_rate = 0.2
-max_seq_len = 1000
+max_seq_len = block_size
 dtype = jnp.bfloat16
 
 rng = jax.random.PRNGKey(1337)
@@ -139,9 +138,13 @@ class GPTLanguageModel(nn.Module):
         return logits, jnp.mean(loss)
 
     def generate(self, params, key, idx, max_new_tokens: int = 100):
+        res = []
+        # if the seq is too long, we only take the last max_seq_len tokens
+        if idx.shape[1] > max_seq_len:
+            idx = idx[:, -max_seq_len:]
         start_pos = idx.shape[1] - 1
         # pad idx to max_new_tokens
-        idx = jnp.pad(idx, ((0, 0), (0, max_new_tokens)), mode='constant', constant_values=0)
+        idx = jnp.pad(idx, ((0, 0), (0, min(max_new_tokens, max_seq_len)-idx.shape[1])), mode='constant', constant_values=0)
 
         @jax.jit
         def step_fn(i: int, idx: jnp.ndarray, subkey: jnp.ndarray):
@@ -151,9 +154,13 @@ class GPTLanguageModel(nn.Module):
             new_idx = idx.at[:, i+1].set(token)
             return new_idx
         for i in range(start_pos, start_pos + max_new_tokens):
+            if i >= max_seq_len - 1:
+                idx = jnp.roll(idx, shift=-1, axis=1)
             key, subkey = jax.random.split(key)
-            idx = step_fn(i, idx, key)
-        return jnp.array(idx)
+            cur_i = min(i, max_seq_len-2)
+            idx = step_fn(cur_i, idx, subkey)
+            res.append(idx[:, cur_i])
+        return jnp.stack(res, axis=1)
 
 xb, yb = get_batch("train")
 
@@ -165,11 +172,19 @@ params = m.init(subkey, xb, yb, training=False)
 param_count = sum(x.size for x in jax.tree_util.tree_leaves(params))
 print("Param count:", param_count / 1e6, "M")
 
+def dfs_print(tree, indent=0):
+    for k, v in tree.items():
+        if isinstance(v, dict):
+            print("  " * indent, k)
+            dfs_print(v, indent + 1)
+        else:
+            print("  " * indent, k, v.size)
+
 xb_, yb_ = get_batch("train")
 out, loss = m.apply(params, xb_, yb_)
 
 key, subkey = jax.random.split(key)
-idx = jnp.zeros((1, 1), dtype=jnp.int32)
+idx = jnp.zeros((1, 0), dtype=jnp.int32)
 print(decode(np.array(m.generate(params, subkey, idx, max_new_tokens=500)[0])))
 
 optimizer = optax.adamw(learning_rate, weight_decay=1e-2) # default weight decay is 1e-4, different from PyTorch
