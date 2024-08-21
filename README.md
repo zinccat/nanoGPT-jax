@@ -2,12 +2,12 @@
 nanoGPT in jax
 
 ## Usage
-On RTX 3090, 500 steps takes
 ```bash
 python gpt.py
 ```
 
 ## Benchmark
+On RTX 3090, 500 steps takes
 |      | PyTorch | Jax   |
 | ---- | ------- | ----- |
 | bf16 |         | 35.8s |
